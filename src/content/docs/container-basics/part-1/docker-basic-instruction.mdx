@@ -1,0 +1,150 @@
+---
+title: Dockerの基本コマンド
+---
+
+## Dockerの立ち上げから削除まで
+
+### コンテナを立ち上げる
+```bash title="nginxを立ち上げる"
+user@host-vm:~$ docker run -d --name my-nginx -p 8080:80 nginx:latest
+Unable to find image 'nginx:latest' locally
+latest: Pulling from library/nginx
+062e450697fa: Pull complete 
+82454cdbf456: Pull complete 
+3c7ab7949321: Pull complete 
+cacfcdd01f30: Pull complete 
+b6698f04e005: Pull complete 
+2bedaf25031a: Pull complete 
+d26f27cc8c41: Pull complete 
+Digest: sha256:5a88c9c45479443d7be2eadc894b4ed0a9801bae03d97a5760ae13b5c2005942
+Status: Downloaded newer image for nginx:latest
+960c06e5ce3994380a802693fe275f0e9a4a7183e9a2fd5bd59f050dbba73431
+```
+
+- <code>docker run [<i>options</i>...] <i>image</i> [<i>command</i>] [<i>args</i>...]</code>  
+  コンテナを直接起動する（`create`+`start`）。
+- <code>-d</code>  
+  コンテナをバックグラウンド（detached）で実行する。
+- <code>--name <i>container-name</i></code>  
+  コンテナ名を明示して作成する。
+- <code>-p <i>host-port</i>:<i>container-port</i></code>  
+  コンテナのポートをホストに公開する。
+
+
+コマンドの操作対象として指定可能な「識別子」として、コンテナ名とコンテナIDが使用できる。
+コンテナ名は `--name` で指定するか、適当な単語（形容詞+名詞）で自動生成される。
+
+一方でコンテナIDは常に自動的に生成される、一意な64桁の16進数の値である。
+コンテナ名では重複する可能性があるが、コンテナIDは重複しない。
+コマンドの出力としては、多くの場合、先頭の12桁が出力される。
+ただし、他のコンテナと前方一致で区別できさえすれば、より短く入力しても問題ない。
+
+
+### コンテナの状態を確認する
+```bash title="現在立ち上がっているコンテナを表示"
+user@host-vm:~$ docker ps
+CONTAINER ID   IMAGE          COMMAND                   CREATED          STATUS          PORTS                                     NAMES
+960c06e5ce39   nginx:latest   "/docker-entrypoint.…"   28 seconds ago   Up 27 seconds   0.0.0.0:8080->80/tcp, [::]:8080->80/tcp   my-nginx
+```
+
+- <code>docker ps [<i>options</i>...]</code>  
+  デフォルトでは現在実行中のコンテナを一覧表示する。
+- <code>-a, --all</code>  
+  停止中のコンテナも含めて一覧表示する。
+- <code>-q, --quiet</code>  
+  コンテナIDのみを表示する。
+- <code>-s, --size</code>  
+  各コンテナが消費しているディスク容量を表示する。
+
+
+### コンテナの一時停止と再開
+```bash title="コンテナを停止する"
+user@host-vm:~$ docker stop my-nginx
+my-nginx
+```
+
+```bash title="コンテナを再度立ち上げる"
+user@host-vm:~$ docker start my-nginx
+my-nginx
+```
+
+#### `docker stop` vs `docker kill`
+`docker stop` はコンテナに `SIGTERM` （終了要求）を送り、アプリケーションが安全にデータを保存してから終了する猶予を与える。
+デフォルトでは10秒待機し、時間内に終了しない場合は `SIGKILL` （強制終了）を送る。
+一方で `docker kill` は初めから確認等なく `SIGKILL` を送る。
+
+```bash title="コンテナを強制終了する"
+user@host-vm:~$ docker kill my-nginx
+my-nginx
+```
+
+### コンテナの破棄
+```bash title="コンテナを削除する"
+user@host-vm:~$ docker rm my-nginx
+my-nginx
+```
+
+- `-f, --force`  
+  コンテナが稼働中であっても強制的に削除（`kill`+`rm`）
+
+コンテナが終了していない場合、エラーが発生するが、 `-f` または `--force` をつけて実行することで、即時終了可能。
+ただし、`SIGKILL` による強制終了のため、安全に終了したい場合には、あらかじめ `docker stop` すること。
+
+```bash title="コンテナが稼働中のため削除できない場合"
+user@host-vm:~$ docker rm my-nginx
+Error response from daemon: cannot remove container "my-nginx": container is running: stop the container before removing or force remove
+```
+
+## コンテナの中に入ってみる
+```bash title="対話モードでコンテナを起動する"
+user@host-vm:~$ docker run -it --rm ubuntu:latest bash
+Unable to find image 'ubuntu:latest' locally
+latest: Pulling from library/ubuntu
+ed819469700f: Pull complete 
+a3679419df18: Pull complete 
+Digest: sha256:3131b4cc82a783df6c9df078f86e01819a13594b865c2cad47bd1bca2b7063bb
+Status: Downloaded newer image for ubuntu:latest
+root@8de60d974ba0:/#
+```
+
+- <code>-it</code>  
+  対話（interactive）モードで起動する。
+- <code>--rm</code>  
+  終了時にコンテナを自動的に削除する（自動的に`docker rm`が行われる）。
+
+### コンテナのプロセス隔離を確認する
+`ps` （または `pstree`）を実行して（`docker ps` ではない）、
+コンテナのプロセスがホストから、どう見えるのかを確認してみる。
+
+```bash title="プロセス一覧を見る（ホスト）"
+user@host-vm:~$ ps auxf | grep --color=always -E "containerd-shim-runc|$" | less -R
+# or pstree -pa | grep --color=always -E "containerd|$" | less -R
+USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+# ...
+root      932388  0.0  0.1 1235356 11096 ?       Sl   04:46   0:00 /usr/bin/containerd-shim-runc-v2 -namespace moby -id 8de60d974ba0ba66a133fd9e832bfc2921afa88e3942b5654a963bcebceaf5a8 -address /run/containerd/containerd.sock
+root      932412  0.0  0.0   4776  4324 pts/0    Ss+  04:46   0:00  \_ bash
+```
+
+同様に `ps` `pstree` をコンテナ内で実行すると次のように表示される。
+コンテナ内で実行するとホストプロセスは見えず、`nginx` が `PID = 1` として表示される。
+
+```bash title="プロセス一覧を見る（コンテナ）"
+root@8de60d974ba0:/# ps auxf
+# or pstree -pa
+USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root           1  0.0  0.0   4776  4324 pts/0    Ss   19:46   0:00 bash
+root           8  0.0  0.0   6760  4188 pts/0    R+   19:47   0:00 ps auxf
+```
+
+```bash title="コンテナを抜ける"
+root@d94bd6a9abde:/ $ exit
+```
+コンテナを抜ける。`bash` が親プロセスになっているため、`exit` で抜けることで `bash` を落とすとコンテナ自体が終了する。
+
+```bash title="host"
+docker ps -a
+```
+
+`--rm`によってコンテナが消えていることを確認。
+
+

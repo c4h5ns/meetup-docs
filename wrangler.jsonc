@@ -1,0 +1,19 @@
+{
+    "name": "meetup-docs",
+    "compatibility_date": "2026-07-24",
+    "compatibility_flags": [
+        "nodejs_compat",
+        "global_fetch_strictly_public"
+    ],
+    "main": "@astrojs/cloudflare/entrypoints/server",
+    "assets": {
+        "binding": "ASSETS",
+        "directory": "./dist"
+    },
+    "images": {
+        "binding": "IMAGES"
+    },
+    "observability": {
+        "enabled": true
+    }
+}

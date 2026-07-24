@@ -1,0 +1,38 @@
+---
+title: コンテナのライフサイクル
+---
+
+import Figure from "@components/Figure.astro"
+
+<Figure
+    src={import("./assets/diagrams-container-lifecycle.svg")}
+    caption="Dockerのライフサイクル"
+    class="bg-gray-50"
+/>
+
+## 🟠 イメージ（Image）
+アプリケーションの動作に必要なファイルをすべて1つにして固めた、イミュータブル（immutable, 不変）なファイル。  
+「スタンプ」のようなもの。
+
+## 🟢 レジストリ（Registry）
+完成したイメージ（Image）を保存し、他の開発者と共有したり本番環境で利用したりするための保管場所。
+インターネット経由で誰でも利用なパブリックレジストリと、自社等で利用するためのプライベートレジストリがある。
+「スタンプの販売店」のようなもの。
+
+有名なレジストリの例:
+- [Docker Hub](https://hub.docker.com/)
+- [GitHub Container Registry (GHCR)](https://docs.github.com/ja/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+- [AWS Elastic Container Registry (AWS ECR)](https://aws.amazon.com/jp/ecr/)
+- [Google Artifact Registry (GAR)](https://cloud.google.com/artifact-registry)
+- [Azure Container Registry (ACR)](https://docs.microsoft.com/ja-jp/azure/container-registry/)
+
+## 🔵 コンテナ（Container）
+イメージ（Image）をもとに作られた「実際に動いている隔離された実行環境（プロセス）」。
+CPUやメモリが割り当てられ、実際にアプリケーションが動作する場所。
+1つのイメージから複数の同じコンテナを同時に起動することもできる。
+「スタンプでできた印影」のようなもの。
+
+## 🟡 Dockerfile
+コンテナの中身の作り方を定義したテキストファイル。
+ベースとなるOS環境、インストールするソフトウェア、設定ファイル、起動するプログラムが記述されている。
+「スタンプのデザイン設計書」のようなもの。
