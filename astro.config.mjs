@@ -16,7 +16,7 @@ export default defineConfig({
         }),
         starlight({
             title: '自主勉強会資料',
-            social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/c4h5ns/meetup-container-basics' }],
+            social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/c4h5ns/meetup-docs' }],
             sidebar: [
                 {
                     label: 'コンテナ基礎',
