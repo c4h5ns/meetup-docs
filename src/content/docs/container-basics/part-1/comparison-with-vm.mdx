@@ -99,6 +99,12 @@ sequenceDiagram
 
 ## 仮想マシン（VM）とコンテナ
 
+<Figure
+    src={import("./assets/diagrams-system-stack-comparison.svg")}
+    caption="システムスタックの比較"
+    class="bg-gray-50"
+/>
+
 ### ホスト型VM
 物理マシンのOS（ホストOS）上に「VirtualBox」「VMWare Workstation」などの仮想化ソフトウェアをインストールして動かす。
 
@@ -122,12 +128,3 @@ sequenceDiagram
 - ✅ どの環境にも同じアプリケーションを用意に複製して実行できる
 - ❌ ホストOSと異なるOSを動作させることはできない（Windows上でUbuntuは不可）
 - ❌ ホストOSの脆弱性やバグがコンテナに影響する可能性がある
-
-### システムスタックの比較
-
-<Figure
-    src={import("./assets/diagrams-system-stack-comparison.svg")}
-    caption="システムスタックの比較"
-    class="bg-gray-50"
-/>
-
