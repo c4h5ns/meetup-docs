@@ -3,3 +3,10 @@
 @import '@astrojs/starlight-tailwind';
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/utilities.css' layer(utilities);
+
+@media print {
+    .sl-heading-wrapper {
+        break-inside: avoid;
+        break-after: avoid;
+    }
+}
