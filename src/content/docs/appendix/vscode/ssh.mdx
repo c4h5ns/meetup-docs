@@ -1,0 +1,41 @@
+---
+title: VSCodeでのSSH接続方法
+---
+
+import Figure from "@components/Figure.astro";
+
+
+左下のアイコンを押下する。
+<Figure
+    src={import("./assets/vscode-ssh-first-screen.png")}
+    caption="VSCode 起動直後"
+/>
+
+`現在のウィンドウをホストに接続する` を押下する。
+<Figure
+    src={import("./assets/vscode-ssh-connect-to-host.png")}
+    caption="VSCode リモート接続"
+/>
+
+<code><i>user</i>@<i>host</i></code> の形式で入力する。
+（例： `ubuntu@10.11.12.13`）
+<Figure
+    src={import("./assets/vscode-ssh-input-user-and-host.png")}
+    caption="VSCode 起動直後"
+/>
+
+初回はフィンガープリントの確認が出る。接続先に誤りがなければ `続行` を押下する。
+<Figure
+    src={import("./assets/vscode-ssh-accept-fingerprint.png")}
+    caption="VSCode 起動直後"
+/>
+
+接続先に合わせて `Linux` を選択する。
+<Figure
+    src={import("./assets/vscode-ssh-select-remote-platform.png")}
+    caption="VSCode 起動直後"
+/>
+
+うまくいくと、初回や久しぶりの実行時には右下にVSCode Serverのインストール通知が表示された後、
+最初に押下したボタンが <code>SSH: <i>user</i>@<i>host</i></code> のような表示に変化する。
+`[Ctrl] + @` でVSCode内のターミナルを開けるかを確認してみる。

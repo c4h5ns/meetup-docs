@@ -46,6 +46,19 @@ export default defineConfig({
                         },
                     ]
                 },
+                {
+                    label: 'Appendix',
+                    items: [
+                        {
+                            label: 'VSCode',
+                            items: [
+                                {
+                                    slug: 'appendix/vscode/ssh'
+                                }
+                            ]
+                        }
+                    ]
+                }
             ],
             customCss: [
                 './src/styles/global.css'
