@@ -232,8 +232,8 @@ user@host-vm:~$ docker build -t my-image .
 
 ### レイヤーの確認
 ```bash title="レイヤーの確認（例）"
-docker run -d --name my-app 
-docker history my-app
+user@host-vm:~$ docker run -d --name my-app 
+user@host-vm:~$ docker history my-app
 
 IMAGE          CREATED         CREATED BY                                      SIZE
 <missing>      2 minutes ago   CMD ["uvicorn" "main:app" "--host" "0.0...      0B
@@ -245,7 +245,7 @@ IMAGE          CREATED         CREATED BY                                      S
 ```
 
 ```bash title="OverlayFSの確認（例）"
-docker inspect --format='{{json .GraphDriver.Data}}' my-app | jq
+user@host-vm:~$ docker inspect --format='{{json .GraphDriver.Data}}' my-app | jq
 ```
 
 ```json
@@ -256,4 +256,3 @@ docker inspect --format='{{json .GraphDriver.Data}}' my-app | jq
   "WorkDir": "/var/lib/docker/overlay2/zzz/work"
 }
 ```
-

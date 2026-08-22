@@ -22,21 +22,18 @@ title: 永続化とバインドマウント
 実態がホスト側の別の場所に保存されていることから削除されない。
 
 ```bash title="手動でのバインド"
-mkdir /tmp/source_dir
-mkdir /tmp/target_dir
+user@host-vm:~$ mkdir /tmp/source_dir
+user@host-vm:~$ mkdir /tmp/target_dir
 
-echo "Hello, Bind Mount!" > /tmp/source_dir/hello.txt
+user@host-vm:~$ echo "Hello, Bind Mount!" > /tmp/source_dir/hello.txt
 
-sudo mount --bind /tmp/source_dir /tmp/target_dir
+user@host-vm:~$ sudo mount --bind /tmp/source_dir /tmp/target_dir
 
-cat /tmp/target_dir/hello.txt
+user@host-vm:~$ cat /tmp/target_dir/hello.txt
 
-echo "Updated from target" >> /tmp/target_dir/hello.txt
+user@host-vm:~$ echo "Updated from target" >> /tmp/target_dir/hello.txt
 
-cat /tmp/source_dir/hello.txt
-# 出力: 
-# Hello, Bind Mount!
-# Updated from target
+user@host-vm:~$ cat /tmp/source_dir/hello.txt
 ```
 
 ## Dockerでのバインドマウント

@@ -100,7 +100,6 @@ user@host-vm:~$ ls -l dir3/aaa
 ```
 
 ```bash title="opaque属性の追加"
-getfattr -d -m "-" dir3/src
-
-trusted.overlay.opaque="y"
+user@host-vm:~$ getfattr -d -m "-" dir3/src
+user@host-vm:~$ sudo setfattr -n "trusted.overlay.opaque" -v "y" dir3/src
 ```
