@@ -1,0 +1,52 @@
+---
+title: 永続化とバインドマウント
+---
+
+現時点のコンテナでは、コンテナ削除時にupperdirがともに消えてしまうことから、以下のような問題が発生する。
+
+- **データ永続化**  
+  コンテナのupperdirはコンテナ削除時に消える。
+  そのため、データベースのデータやログファイルなどの、コンテナを消しても残したいファイルも残らない。
+- **データ同期**  
+  開発時はコンテナ内でソースコードのビルドと動作確認を行うことがある。
+  現状ではソースコードの変更のたびにDockerfileのビルドとコンテナの再起動を行わなければ、変更が反映されない。
+
+これを解決する手法がバインドマウント(Bind Mount)である。
+バインドマウントについてもLinuxの機能であり、指定したディレクトリやファイルを別のディレクトリやファイルに直接マウントすることができる。
+マウントされたファイルやディレクトリについては、全く同じものとして扱われるため、
+一方でファイルやディレクトリに変更を行うと、即時に他方にも反映される。
+
+コンテナの文脈では普通、ホスト側のディレクトリやファイルを、コンテナ内のディレクトリ（正確にはホスト内のmergeddir）やそのファイルにマウントする。
+コンテナ内からファイルを編集した場合、通常はOverlayFSの働きによってupperdirへ更新が行われ、コンテナの削除とともに消滅する。
+ただし、ホストのディレクトリやファイルをマウントしたディレクトリやファイルについては、
+実態がホスト側の別の場所に保存されていることから削除されない。
+
+```bash title="手動でのバインド"
+mkdir /tmp/source_dir
+mkdir /tmp/target_dir
+
+echo "Hello, Bind Mount!" > /tmp/source_dir/hello.txt
+
+sudo mount --bind /tmp/source_dir /tmp/target_dir
+
+cat /tmp/target_dir/hello.txt
+
+echo "Updated from target" >> /tmp/target_dir/hello.txt
+
+cat /tmp/source_dir/hello.txt
+# 出力: 
+# Hello, Bind Mount!
+# Updated from target
+```
+
+## Dockerでのバインドマウント
+```bash
+docker run -d \
+  --mount type=bind,source=$(pwd)/src,target=/app/src \
+  my-app
+
+# Read Only
+docker run -d \
+  --mount type=bind,source=$(pwd)/src,target=/app/src,readonly \
+  my-app
+```

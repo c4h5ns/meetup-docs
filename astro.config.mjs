@@ -44,6 +44,23 @@ export default defineConfig({
                                 }
                             ]
                         },
+                        {
+                            label: '第2回',
+                            items: [
+                                {
+                                    slug: 'container-basics/part-2'
+                                },
+                                {
+                                    slug: 'container-basics/part-2/overlayfs-overview'
+                                },
+                                {
+                                    slug: 'container-basics/part-2/dockerfile-and-overlayfs'
+                                },
+                                {
+                                    slug: 'container-basics/part-2/bind-mount'
+                                }
+                            ]
+                        }
                     ]
                 },
                 {

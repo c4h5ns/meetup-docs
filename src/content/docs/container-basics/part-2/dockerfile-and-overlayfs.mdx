@@ -1,0 +1,259 @@
+---
+title: DockerfileとOverlayFS
+---
+
+import Figure from "@components/Figure.astro"
+
+`Dockerfile` はコンテナイメージの設計図であり、構築手順をテキストで定義したもの
+(IaC: Infrastructure as Code)。
+手作業での環境構築と異なり、環境や作業者等による際をなくすことができる。
+またテキストベースであることから、Git等での管理が容易であることも利点である。
+
+## Dockerfileの記述
+
+### 記述例
+#### Nginx
+```dockerfile title="Dockerfile"
+FROM nginx:alpine
+
+COPY ./public /usr/share/nginx/html
+
+EXPOSE 80
+```
+
+<details>
+<summary>必要ファイル例</summary>
+
+```html title="public/index.html"
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Docker Nginx Test</title>
+</head>
+<body>
+    <h1>Hello from OverlayFS!</h1>
+    <p>このページは Nginx コンテナから配信されています。</p>
+</body>
+</html>
+```
+
+</details>
+
+#### Node.js (Express, React, etc.)
+```dockerfile title="Dockerfile"
+FROM node:26-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm install
+
+COPY . .
+
+EXPOSE 3000
+CMD ["npm", "start"]
+```
+
+<details>
+<summary>必要ファイル例</summary>
+
+```json title="package.json"
+{
+  "name": "docker-node-test",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.0"
+  }
+}
+```
+
+
+```javascript title="server.js"
+const express = require('express');
+const app = express();
+const port = 3000;
+
+app.get('/', (req, res) => {
+  res.send('Hello from Node.js Container!');
+});
+
+app.listen(port, () => {
+  console.log(`App listening at http://localhost:${port}`);
+});
+```
+
+</details>
+
+
+#### Python (FastAPI, Flask, Django, etc.)
+```dockerfile title="Dockerfile"
+FROM python:3.14-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+<details>
+<summary>必要ファイル例</summary>
+
+```text title="requirements.txt"
+fastapi==0.111.0
+uvicorn==0.29.0
+```
+
+```python title="main.py"
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/")
+def read_root():
+    return {"message": "Hello from Python(FastAPI) Container!"}
+```
+
+</details>
+
+### 基本的なルール
+#### ファイル名
+原則としてファイル名は `Dockerfile` とする。
+複数のDockerfileを作成したい場合等は `Dockerfile.xxx`, `Dockerfile.yyy` などとする。
+この場合、Dockerfileを利用するコマンドを実行する際には、明示的にファイル名を指定する必要がある。
+
+#### 命令
+命令は1行毎に解釈され（ただし、行末 `\` で途中改行できる）、
+多くのプログラミング同様、上から順に実行される。
+通常コマンド名（`FROM`, `RUN` など）はすべて大文字で書くことが推奨される。
+
+`#` で始まる行はコメントとして無視される。
+
+### 主要なコマンド
+- `FROM`: ベースとなるイメージを指定する。ファイルの先頭に必須。
+- `WORKDIR`: コンテナ内の作業ディレクトリを変更する。コンテナ側の相対パスを指定したときの基準ディレクトリにもなる。
+- `COPY`: ホスト側のファイルをコンテナ内にコピーする。
+- `RUN`: ビルド時にコンテナ内でコマンドを実行する。
+- `CMD`: コンテナ起動時に実行されるデフォルトのプロセスを指定する。
+- `ENV`, `EXPOSE`: 環境変数や、公開するポートの設定を行う。
+
+### Dockerfileのビルドとコンテナ実行
+Dockerfile自体は設計書のため、イメージ化を行う必要がある。
+
+```bash
+user@host-vm:~$ docker build -t my-image .
+```
+
+- <code>docker build [<i>options</i>...] <i>path</i> | <i>url</i> | -</code>  
+  Dockerfileをビルドする。
+  <code><i>path</i> | <i>url</i> | -</code> はビルドコンテキスト（Dockerfileで参照可能なファイル）を指定する。
+- <code>-t, --tag <i>name</i>[:<i>tag</i>]</code>  
+  イメージへの名前・タグ付けをおこなう。
+  <code><i>tag</i></code>を省略した場合 `latest` となる。
+- <code>-f, --file <i>path</i></code>  
+  デフォルトの `Dockerfile` 以外のファイルを入力として使用したい場合に指定する。
+
+
+## Dockerイメージとレイヤー
+### Dockerイメージと従来のイメージの違い
+従来の仮想マシン(VM)で用いられるISOイメージや仮想ディスクイメージは
+最終結果のみを保持していることが特徴である。
+
+一方でDockerイメージは変更差分の積み重ね（レイヤー, Layer）で表現される。
+このレイヤーが多数の利点を生み出す。
+
+<table>
+    <thead>
+        <tr>
+            <th></th>
+            <th>Dockerイメージ</th>
+            <th>従来のISO/VMイメージ</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>構造</td>
+            <td>変更差分ごとの「レイヤ」の積み重ね</td>
+            <td>OS全体を含むすべての塊（モノリシック）</td>
+        </tr>
+        <tr>
+            <td>ストレージ効率</td>
+            <td>高い（共通のベース層は複数のコンテナで共有される）</td>
+            <td>低い（VMを立てるたびに複製される）</td>
+        </tr>
+        <tr>
+            <td>アップデート</td>
+            <td>変更があったレイヤーのみを取得</td>
+            <td>イメージ全体を取得</td>
+        </tr>
+        <tr>
+            <td>構築</td>
+            <td>レイヤごとにキャッシュされ、途中から再開可能</td>
+            <td>OSを起動し、環境を構築して全体を保存する</td>
+        </tr>
+    </tbody>
+</table>
+
+またDockerfileを用いて構築する場合、同じベースイメージを共有するDockerfileについては、ベースイメージ部は共有される。
+また **1行** = **1レイヤー** としてキャッシュされるため、Dockerfileを修正した場合には、
+修正行以降のみがリビルドされる。
+
+<Figure
+    src={import("./assets/diagrams-image-layer.svg")}
+    caption="Dockerfileとレイヤー"
+    class="bg-gray-50"
+/>
+
+
+## イメージレイヤーとOverlayFS
+コンテナ起動時、デフォルトでは揮発性（コンテナを削除すると消える）ディレクトリがOverlayFSによってマウントされる。
+
+<Figure
+    src={import("./assets/diagrams-image-layer-and-overlayfs.svg")}
+    caption="イメージレイヤーとOverlayFS"
+    class="bg-gray-50"
+/>
+
+具体的には次のような手順である（以下は通常 `/var/lib/docker/overlay2/` 配下に作成される）。
+1. 起動するコンテナイメージのレイヤーそれぞれをディレクトリに展開（これらがすべてlowerdirとなる）
+2. コンテナごとにupperdir, mergeddir, workdirを作成
+3. 1, 2で作成したディレクトリでOverlayFSを作成
+4. mergeddirをコンテナ側にルート（`/`）として認識させ、起動する
+
+### レイヤーの確認
+```bash title="レイヤーの確認（例）"
+docker run -d --name my-app 
+docker history my-app
+
+IMAGE          CREATED         CREATED BY                                      SIZE
+<missing>      2 minutes ago   CMD ["uvicorn" "main:app" "--host" "0.0...      0B
+<missing>      2 minutes ago   EXPOSE map[8000/tcp:{}]                         0B
+<missing>      2 minutes ago   COPY . . # buildkit                             4.5kB
+<missing>      2 minutes ago   RUN /bin/sh -c pip install --no-cache-dir...    55MB
+<missing>      3 minutes ago   COPY requirements.txt . # buildkit              50B
+...
+```
+
+```bash title="OverlayFSの確認（例）"
+docker inspect --format='{{json .GraphDriver.Data}}' my-app | jq
+```
+
+```json
+{
+  "LowerDir": "/var/lib/docker/overlay2/xxx-init/diff:/var/lib/docker/overlay2/yyy/diff",
+  "MergedDir": "/var/lib/docker/overlay2/zzz/merged",
+  "UpperDir": "/var/lib/docker/overlay2/zzz/diff",
+  "WorkDir": "/var/lib/docker/overlay2/zzz/work"
+}
+```
+

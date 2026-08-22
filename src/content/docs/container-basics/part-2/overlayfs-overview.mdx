@@ -1,0 +1,106 @@
+---
+title: OverlayFSの概要
+---
+
+import Figure from "@components/Figure.astro"
+
+
+OverlayFS (Overlay File System) はLinuxカーネルに標準搭載されている、ユニオンマウントを実現するためのファイルシステム。
+複数の異なるディレクトリを、透過的に1つのディレクトリとして見せることができる。
+
+## 基本的な仕組み
+OverlayFSは複数のディレクトリで構成される。
+それらディレクトリは次の4つに分類できる。
+
+- **lowerdir** (`dir1`, `dir2`)
+  - レイヤーの中でも最下層帯のディレクトリ群
+  - これらのディレクトリは読み取り専用として扱われ、どのような操作でも変更されない
+- **upperdir** (`dir3`)
+  - lowerdirの上のレイヤーのディレクトリ
+  - 操作の差分のみを保持するためのディレクトリであることから、ディレクトリは読み書きの両方が行われる
+- **mergeddir** (`dir4`)
+  - lowerdirとupperdir の内容を統合した結果が見える、最上層のディレクトリ
+  - このディレクトリに対する操作は、実際にはupperdirに反映される
+- **workdir** (`dir_work`)
+  - OverlayFSが内部的に使用する、ファイル操作をアトミックに行うための作業領域
+  - upperdirと同じファイルシステム（同ディスク、同パーティション）に存在する必要がある
+
+したがって、lowerdir, upperdir間で同じディレクトリやファイルが存在した場合、
+より上位のディレクトリに存在するディレクトリ、ファイルが優先され、mergeddirから見える。
+
+<Figure
+    src={import("./assets/diagrams-overlayfs.svg")}
+    caption="OverlayFSを構成するディレクトリとレイヤー"
+    class="bg-gray-50"
+/>
+
+例においては、`dir3` > `dir2` > `dir1` という優先度となっている。
+- `aaa`:  
+  まだ更新、削除は行われていない。  
+  `dir1` にのみ存在するため、 **#1** のファイルが `dir4` から見える。
+- `bbb`:  
+  まだ更新、削除は行われていない。  
+  `dir2` にのみ存在するため、 **#2** のファイルが `dir4` から見える。
+- `ccc` :  
+  `dir4` に対する更新で `dir3` にファイル **#3** が作成されている。  
+  結果として、 `dir2`, `dir3` の両方に存在するため、 **#3** （更新後）のファイルが `dir4` から見える。
+- `ddd` :  
+  `dir4` に対する削除で `dir3` に特殊なファイル(whiteout)が作成されている
+  （下層のファイルに対しては削除操作が行えないため）。  
+  結果として、 `dir1` のファイルが `dir3` のwhiteoutで隠されることになるため、 `dir4` では見えない。
+- `eee` :
+  `dir4` に対する新規作成で `dir3` にファイル **#3** が作成されている。  
+  `dir3` のみにファイルが存在するため、 **#3** のファイルが `dir4` から見える。
+
+## より詳細な仕組み
+### ファイルの更新とworkdir
+レイヤー間の統合では、常にファイル単位で行われる。
+そのため、例えば lowerdir に存在するファイルに1行だけ追加したい場合でも、
+前もって `upperdir` へのコピーを行っておく必要がある。
+しかし対象ファイルのコピーが何らかの理由で中断された場合、壊れたファイルが見えることになり、
+OverlayFSの透過性が失われる。
+
+ここで、 `lowerdir` の更新対象のファイルを `workdir` へコピーし、 `upperdir` へ移動するという2段階の操作を行う。
+コピー操作のアトミック性は担保されていない一方、移動操作はアトミック性が担保されているため、
+`upperdir` にはコピー前のファイルか、コピー後のファイルのどちらかしか見えない。
+
+### ディレクトリの上書きと `trusted.overlay.opaque=y`
+`lowerdir`, `upperdir` に同じディレクトリが存在する場合、通常ではファイル単位で統合される。
+しかし次のような場合で問題が発生する。
+
+1. `dir_x`: `/src/foo.txt` を作成する
+2. `dir_x` をlowerdir、 `dir_y` をupperdir、 `dir_z` をmergeddirとしてOverlayFSを構成する
+3. `dir_z` に対して `/src` を丸ごと削除する
+    - `dir_y` に `/src` というwhiteoutファイルが作成される
+4. `dir_z` に対して `/src/bar.txt` を作成する
+    - すでに `/src` というwhiteoutファイルが存在するため、一旦削除の上 `/src/bar.txt` が作成される
+
+結果として `/src` を **削除したという情報が失われる** ため、 `dir_z` の `/src` には **`foo.txt` が見える** 。
+この問題に対処するため、一旦削除されたディレクトリ（例では `dir_y` の `/src` ディレクトリ）に対しては `trusted.overlayfs.opaque=y` という属性が付与される。
+OverlayFSがファイル統合時に、この属性がついているディレクトリを発見すると、それよりも下レイヤーの統合を打ち切る。
+その結果 `foo.txt` は見えなくなる。
+
+## 手動でのマウント
+```bash title="手動マウント"
+user@host-vm:~$ mkdir dir1 dir2 dir3 dir_work dir4
+
+user@host-vm:~$ echo "from dir1" > dir1/aaa
+user@host-vm:~$ echo "from dir2" > dir2/bbb
+
+user@host-vm:~$ sudo mount -t overlay overlay -o lowerdir=dir2:dir1,upperdir=dir3,workdir=dir_work dir4
+
+user@host-vm:~$ ls dir4/ # aaa bbb
+```
+
+```bash title="whiteoutの確認"
+user@host-vm:~$ rm dir4/aaa
+
+user@host-vm:~$ ls -l dir3/aaa
+# Ex) c--------- 1 root root 0, 0 10月 20 12:00 dir3/aaa
+```
+
+```bash title="opaque属性の追加"
+getfattr -d -m "-" dir3/src
+
+trusted.overlay.opaque="y"
+```
