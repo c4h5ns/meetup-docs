@@ -1,0 +1,226 @@
+---
+title: Docker Composeの概要
+---
+
+Docker Composeは、複数のコンテナからなるアプリケーションの構成を1つのYAMLファイルで定義し、一括で構築・実行・管理するツールである。
+アプリケーションに必要な設定が多いほど増える `docker run` のオプションを設定ファイルに保存することができる。
+`Dockerfile` と同様、 `docker-compose.yml` もテキストファイルとして保存することができるため、Git等での管理も容易である。
+また、ヘルスチェック機能も含まれるため、複数コンテナの依存関係についても自動的に制御させることができる。
+
+## Docker Composeの機能
+* **YAMLによる一元定義**:  
+  各コンテナのイメージ、公開ポート、環境変数、マウントするボリュームなどを `docker-compose.yml` に集約して記述できる。
+* **一括操作コマンド**:  
+  `docker compose up -d`（起動）や `docker compose down`（破棄）のコマンド一つで、依存する全コンテナ・ネットワーク・ボリュームをまとめて操作できる。
+* **専用ネットワークの自動生成**:  
+  起動時にコンテナ群専用の仮想ネットワークと内蔵DNSを構築し、IPアドレスではなく「サービス名（例：`db`、`web`）」でのコンテナ間通信を実現する。
+* **起動順序と依存関係の制御**:  
+  `depends_on` を指定することで、「データベースの準備が完了してからWebアプリを起動する」といった順序付けを行うことができる。
+
+## Docker Composeの例
+### 例1: 既存イメージから単体コンテナの起動
+- 起動イメージ: `nginx:alpine`
+- 名前: `my-app`
+- ポート: ホストのポート `8080` ↔ コンテナのポート `80` 
+- バインド: ホストの `./src` ↔ コンテナの `/usr/share/nginx/html` （デフォルトの静的ルート）
+- 終了時の再起動: 常に行う
+
+#### `docker run` の場合
+```sh
+docker run -d \
+  --name my-app \
+  -p 8080:80 \
+  -v $(pwd)/src:/usr/share/nginx/html \
+  --restart always
+  nginx:alpine
+```
+
+#### Docker Composeの場合
+```yaml title="docker-compose.yaml"
+services:
+  web:
+    image: nginx: alpine
+    container_name: my-app
+    ports:
+      - "8080:80"
+    volumes:
+      - ./src:/usr/share/nginx/html
+    restart: always
+```
+
+```sh
+docker compose up -d
+```
+
+
+### 例2: Dockerfileからビルドして単体コンテナの起動
+```dockerfile title="./Dockerfile"
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+### `docker run` の場合
+```sh
+docker build -t my-api-image:latest .
+docker run -d \
+  --name my-api \
+  -p 8000:8000 \
+  -v $(pwd)/src:/app \
+  my-api-image:latest
+```
+
+### Docker Composeの場合
+```yaml title="docker-compose.yaml"
+services:
+  api:
+    build: .
+    container_name: my-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app
+```
+
+```sh
+docker compose up -d --build
+```
+
+
+### 例3: 複数コンテナの起動
+```dockerfile title="./Dockerfile"
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+#### `docker run` の場合
+```sh
+# 0. Dockerfileのビルド
+docker build -t my-app-web-image:latest .
+
+# 1. 専用ネットワークの作成
+docker network create my-app-nw
+
+# 2. DBコンテナの起動
+docker run -d \
+  --name my-app-db \
+  --network my-app-nw \
+  -v $(pwd)/db:/var/lib/mysql \
+  -e MYSQL_ROOT_PASSWORD=secret \
+  mysql:8.0
+
+# 3. Webコンテナの起動
+docker run -d \
+  --name my-app-web \
+  --network my-app-nw \
+  -p 8080:8000 \
+  -v $(pwd)/src:/app \
+  -e DB_HOST=my-app-db \
+  my-app-web-image
+```
+
+#### Docker Composeの場合
+```yaml title="docker-compose.yaml"
+services:
+  web:
+    build: .
+    container_name: my-app-web
+    ports:
+      - "80:8080"
+    volumes:
+      - ./src:/app
+    environment:
+      - DB_HOST=my-app-db
+    depends_on:
+      - my-app-db
+
+  db:
+    image: mysql:8.0
+    container_name: my-app-db
+    volumes:
+      - ./db:/var/lib/mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=secret
+```
+
+```sh
+docker compose up -d --build
+```
+
+
+### 例: ヘルスチェックの追加
+#### `docker run` の場合
+```sh
+# 0. Dockerfileのビルド
+docker build -t my-web-app-image:latest .
+
+# 1. 専用ネットワークの作成
+docker network create my-app-nw
+
+# 2. DB起動
+docker run -d \
+  --name my-app-db \
+  --network my-app-nw \
+  -v $(pwd)/db:/var/lib/mysql \
+  -e MYSQL_ROOT_PASSWORD=secret \
+  mysql:8.0
+
+# ポーリング
+echo "Waiting for database..."
+while ! docker exec my-app-db mysqladmin ping -h localhost --silent; do
+    sleep 2
+done
+echo "Database is ready!"
+
+# 3. Web起動
+docker run -d \
+  --name my-app-web \
+  --network my-app-nw \
+  -p 8080:8000 \
+  -v $(pwd)/src:/app \
+  -e DB_HOST=my-app-db \
+  my-web-app-image
+```
+
+#### Docker Composeの場合
+```yaml title="docker-compose.yaml" {13,23-25}
+services:
+  web:
+    build: .
+    container_name: my-app-web
+    ports:
+      - "8080:8000"
+    volumes:
+      - ./src:/app
+    environment:
+      - DB_HOST=my-app-db
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: mysql:8.0
+    container_name: my-app-db
+    volumes:
+      - ./db:/var/lib/mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=secret
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      retries: 5
+```
+
+```sh
+docker compose up -d --build
+```
+

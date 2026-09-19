@@ -60,7 +60,21 @@ export default defineConfig({
                                     slug: 'container-basics/part-2/bind-mount'
                                 }
                             ]
-                        }
+                        },
+                        {
+                            label: '第3回',
+                            items: [
+                                {
+                                    slug: 'container-basics/part-3'
+                                },
+                                {
+                                    slug: 'container-basics/part-3/docker-network'
+                                },
+                                {
+                                    slug: 'container-basics/part-3/docker-compose-overview'
+                                }
+                            ]
+                        },
                     ]
                 },
                 {
