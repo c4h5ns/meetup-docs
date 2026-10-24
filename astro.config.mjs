@@ -85,13 +85,13 @@ export default defineConfig({
                                     slug: 'container-basics/part-4/image-optimization'
                                 },
                                 {
-                                    slug: 'container-basics/part-4/github-actions-ci'
+                                    slug: 'container-basics/part-4/ci'
                                 },
                                 {
-                                    slug: 'container-basics/part-4/cloud-run-deploy'
+                                    slug: 'container-basics/part-4/cd'
                                 },
                                 {
-                                    slug: 'container-basics/part-4/cloud-run-setup'
+                                    slug: 'container-basics/part-4/setup'
                                 }
                             ]
                         },
