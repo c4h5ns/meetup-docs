@@ -1,0 +1,363 @@
+---
+title: Google Cloudの初期設定とIaC（Terraform）
+---
+
+import Figure from "@components/Figure.astro"
+
+GitHub ActionsからGoogle Cloud（Artifact Registry、Cloud Run）へ安全にデプロイするためには、事前にGoogle Cloud側でリポジトリの作成、権限（IAM）、および **Workload Identity連携（OIDC）** を設定しておく必要がある。
+
+## 必要な初期設定の全体像
+
+安全なCI/CDを構築するために必要なリソースと設定は以下の通りである。
+
+<table>
+  <thead>
+    <tr>
+      <th>設定項目</th>
+      <th>目的・役割</th>
+      <th>セキュリティ上の重要ポイント</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>APIの有効化</strong></td>
+      <td>Cloud Run、Artifact Registry、IAM認証のAPIを利用可能にする</td>
+      <td>必要なAPIのみを最小限で有効化する</td>
+    </tr>
+    <tr>
+      <td><strong>Artifact Registry</strong></td>
+      <td>Dockerイメージを保管するプライベートリポジトリ</td>
+      <td>フォーマットを <code>DOCKER</code> に指定</td>
+    </tr>
+    <tr>
+      <td><strong>デプロイ用サービスアカウント</strong></td>
+      <td>GitHub ActionsがGoogle Cloudを操作するためのID</td>
+      <td>オーナー権限を渡さず、必要最小限のロールのみを付与</td>
+    </tr>
+    <tr>
+      <td><strong>Workload Identity 連携</strong></td>
+      <td>GitHub ActionsとGoogle Cloudを鍵なし（OIDC）で安全に接続</td>
+      <td>対象を「特定のリポジトリ（<code>owner/repo</code>）」に限定する</td>
+    </tr>
+    <tr>
+      <td><strong>公開アクセス権限 (Invoker)</strong></td>
+      <td>Cloud RunサービスをWebサイトとして一般公開する</td>
+      <td>Web公開が必要なサービスのみ <code>allUsers</code> を許可</td>
+    </tr>
+  </tbody>
+</table>
+
+---
+
+## パターンA: Google Cloudコンソール（GUI）で行う手順
+
+### 1. 必要なAPIの有効化
+コンソール上部の検索バーで各APIを検索し、「有効にする」をクリックする。
+- **Cloud Run Admin API** (`run.googleapis.com`)
+- **Artifact Registry API** (`artifactregistry.googleapis.com`)
+- **Cloud IAM API** (`iam.googleapis.com`)
+- **IAM Service Account Credentials API** (`iamcredentials.googleapis.com`)
+
+<Figure
+  src={import("./assets/google-cloud-artifact-registry-enablement.png")}
+  caption="Artifact Registry APIの有効化"
+/>
+
+### 2. Artifact Registry リポジトリの作成
+1. ナビゲーションメニューから **`Artifact Registry`** > **`リポジトリ`** を開く。
+2. **`+ リポジトリを作成`** をクリックする。
+   - **名前**: `my-docker-repo`
+   - **形式**: `Docker`
+   - **モード**: `標準`
+   - **ロケーションタイプ**: `リージョン`（例: `asia-northeast1 (東京)`）
+3. **`作成`** をクリックする。
+
+<Figure
+  src={import("./assets/google-cloud-artifact-registry-creation.png")}
+  caption="Artifact Registryリポジトリの作成"
+/>
+
+<Figure
+  src={import("./assets/google-cloud-artifact-registry-repositories.png")}
+  caption="Artifact Registryリポジトリの作成"
+/>
+
+
+### 3. デプロイ用サービスアカウントの作成
+1. **`IAMと管理`** > **`サービス アカウント`** を開く。
+2. **`+ サービス アカウントを作成`** をクリックする。
+   - **サービス アカウント名**: `github-actions-deployer`
+   - **サービス アカウントID**: `github-actions-deployer`
+3. ロール付与ステップで、以下の **3つのロール** を追加する:
+   - **Artifact Registry 書き込み** (`roles/artifactregistry.writer`): イメージのpush権限
+   - **Cloud Run 開発者** (`roles/run.developer`): Cloud Runサービスの作成・更新権限
+   - **サービス アカウント ユーザー** (`roles/iam.serviceAccountUser`): Cloud Run実行時に実行用サービスアカウントを使用する権限
+4. **`完了`** をクリックする。（※セキュリティ保護のため、JSONキーの発行は行わない）
+
+<Figure
+  src={import("./assets/google-cloud-service-account-creation.png")}
+  caption="デプロイ用サービスアカウントの作成"
+/>
+
+<Figure
+  src={import("./assets/google-cloud-service-account-roles.png")}
+  caption="デプロイ用サービスアカウントに最小権限のロールを付与"
+/>
+
+
+### 4. Workload Identity連携（OIDC）の設定
+1. **`IAMと管理`** > **`Workload Identity 連携`** を開く。
+2. **`プールを作成`** をクリックする。
+   - **名前**: `github-actions-pool`
+3. プロバイダの追加:
+   - **プロバイダの種類の選択**: `OpenID Connect (OIDC)`
+   - **プロバイダ名**: `github-actions-provider`
+   - **発行元 (URL)**: `https://token.actions.githubusercontent.com`
+   - **対象者 (Audience)**: `デフォルトのオーディエンス`
+4. 属性マッピングおよび属性条件の設定:
+   - **属性マッピング**:
+     - `google.subject`: `assertion.sub`
+     - `attribute.repository`: `assertion.repository`
+     - `attribute.actor`: `assertion.actor`
+     - `attribute.repository_owner`: `assertion.repository_owner`
+   - **属性条件（Attribute condition）**:
+       ```text
+       assertion.repository == '自身のGitHubユーザー名/リポジトリ名'
+       ```
+       *(組織/ユーザー名配下の全リポジトリを許可したい場合は `assertion.repository_owner == '自身のGitHubユーザー名'`)*
+5. **`保存`** をクリックする。
+6. 作成したプールを選択し、**`アクセスを許可`** をクリックする:
+   - **サービスアカウント**: 手順3で作成した `github-actions-deployer` を選択
+   - **プリンシパル（条件）**: `attribute.repository` を選択し、値に自身のGitHubリポジトリ（例: `my-org/my-app`）を入力
+7. 表示されるプロバイダのリソース名（`projects/.../locations/global/workloadIdentityPools/.../providers/...`）をメモしておく。
+
+<Figure
+  src={import("./assets/google-cloud-workload-identity-pool-creation.png")}
+  caption="Workload Identity Poolの作成"
+/>
+
+<Figure
+  src={import("./assets/google-cloud-workload-identity-provider.png")}
+  caption="Workload Identity Providerの追加"
+/>
+
+<Figure
+  src={import("./assets/google-cloud-workload-identity-attributes.png")}
+  caption="Workload Identity Providerの属性マッピング"
+/>
+
+<Figure
+  src={import("./assets/google-cloud-workload-identity-service-account.png")}
+  caption="Workload Identity Providerにサービスアカウントの権限を付与"
+/>
+
+### 5. Cloud Runの公開アクセス権限
+デプロイしたCloud RunをWebサービスとしてインターネットへ公開する場合、初回デプロイ後（またはTerraform作成時）にアクセス制御を設定する。
+1. **`Cloud Run`** を開き、対象サービスを選択する。
+2. **`セキュリティ`** タブ（または権限パネル）の **`プリンシパルを追加`** をクリックする。
+   - **新しいプリンシパル**: `allUsers`
+   - **ロール**: `Cloud Run 起動元` (`roles/run.invoker`)
+3. 保存し、「一般公開」を許可する。
+
+
+## パターンB: Terraform（IaC）で行う手順
+
+実務では、設定ミスや環境差分を防ぐため、上記の設定を **Terraform (Infrastructure as Code)** でコード化して管理するのが一般的である。
+
+### ディレクトリ構成例
+```text
+terraform/
+├── main.tf                 # API有効化、Artifact Registry、IAM
+├── workload_identity.tf    # Workload Identity Pool / Provider / 権限バインディング
+├── variables.tf            # 変数定義 (プロジェクトID、GitHubリポジトリ名等)
+└── outputs.tf              # GitHub Actionsに設定する値の出力
+```
+
+### 1. 変数定義 (`variables.tf`)
+```hcl title="terraform/variables.tf"
+variable "project_id" {
+  description = "Google Cloud Project ID"
+  type        = string
+}
+
+variable "region" {
+  description = "Google Cloud Region"
+  type        = string
+  default     = "asia-northeast1"
+}
+
+variable "github_repository" {
+  description = "Target GitHub Repository (format: owner/repo)"
+  type        = string
+  default     = "my-github-user/my-web-app"
+}
+```
+
+### 2. 基本リソースとIAMの作成 (`main.tf`)
+```hcl title="terraform/main.tf"
+terraform {
+  required_version = ">= 1.5.0"
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "google" {
+  project = var.project_id
+  region  = var.region
+}
+
+# 1. 必要なAPIの有効化
+locals {
+  services = [
+    "run.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+  ]
+}
+
+resource "google_project_service" "enabled_apis" {
+  for_each           = toset(local.services)
+  service            = each.key
+  disable_on_destroy = false
+}
+
+# 2. Artifact Registry リポジトリの作成
+resource "google_artifact_registry_repository" "docker_repo" {
+  depends_on    = [google_project_service.enabled_apis]
+  repository_id = "my-docker-repo"
+  format        = "DOCKER"
+  location      = var.region
+  description   = "Docker container registry for GitHub Actions"
+}
+
+# 3. デプロイ用サービスアカウントの作成
+resource "google_service_account" "github_deployer" {
+  account_id   = "github-actions-deployer"
+  display_name = "Service Account for GitHub Actions Deployments"
+}
+
+# 4. 最小権限のIAMロールをサービスアカウントに付与
+locals {
+  deployer_roles = [
+    "roles/artifactregistry.writer", # イメージのpush
+    "roles/run.developer",          # Cloud Runのデプロイ
+    "roles/iam.serviceAccountUser", # 実行用SAの借用
+  ]
+}
+
+resource "google_project_iam_member" "deployer_roles" {
+  for_each = toset(locals.deployer_roles)
+  project  = var.project_id
+  role     = each.key
+  member   = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+```
+
+### 3. Workload Identity連携の設定 (`workload_identity.tf`)
+```hcl title="terraform/workload_identity.tf"
+# 1. Workload Identity Pool の作成
+resource "google_iam_workload_identity_pool" "github_pool" {
+  depends_on                = [google_project_service.enabled_apis]
+  workload_identity_pool_id = "github-actions-pool"
+  display_name              = "GitHub Actions Pool"
+  description               = "Workload Identity Pool for GitHub Actions"
+}
+
+# 2. OIDC Provider の作成
+resource "google_iam_workload_identity_pool_provider" "github_provider" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github_pool.workload_identity_pool_id
+  workload_identity_pool_provider_id = "github-actions-provider"
+  display_name                       = "GitHub Actions Provider"
+
+  attribute_mapping = {
+    "google.subject"             = "assertion.sub"
+    "attribute.actor"            = "assertion.actor"
+    "attribute.repository"       = "assertion.repository"
+    "attribute.repository_owner" = "assertion.repository_owner"
+  }
+
+  # プロバイダ側でもリポジトリを制限する場合（attribute. ではなく assertion. を指定する）
+  attribute_condition = "assertion.repository == '${var.github_repository}'"
+
+  oidc {
+    issuer_uri = "https://token.actions.githubusercontent.com"
+  }
+}
+
+# 3. 指定したGitHubリポジトリのみにサービスアカウントの権限借用を許可 (超重要)
+resource "google_service_account_iam_member" "workload_identity_user" {
+  service_account_id = google_service_account.github_deployer.name
+  role               = "roles/iam.workloadIdentityUser"
+
+  # 特定リポジトリからのOIDCトークンのみに制限する
+  member = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_pool.name}/attribute.repository/${var.github_repository}"
+}
+```
+
+### 4. 設定値の出力 (`outputs.tf`)
+デプロイワークフローで使用する設定値をまとめて出力する。
+
+```hcl title="terraform/outputs.tf"
+output "workload_identity_provider" {
+  description = "Set to GitHub Variable: GCP_WORKLOAD_IDENTITY_PROVIDER"
+  value       = google_iam_workload_identity_pool_provider.github_provider.name
+}
+
+output "service_account_email" {
+  description = "Set to GitHub Variable: GCP_SERVICE_ACCOUNT"
+  value       = google_service_account.github_deployer.email
+}
+
+output "artifact_registry_repo" {
+  description = "Artifact Registry Repository Name"
+  value       = google_artifact_registry_repository.docker_repo.name
+}
+```
+
+### Terraformの実行
+```bash
+user@host-vm:~/terraform$ terraform init
+user@host-vm:~/terraform$ terraform plan -var="project_id=YOUR_PROJECT_ID"
+user@host-vm:~/terraform$ terraform apply -var="project_id=YOUR_PROJECT_ID"
+```
+
+---
+
+## GitHubリポジトリの設定（Variablesへの登録）
+
+GUIまたはTerraformの出力結果を元に、GitHubリポジトリの **`Settings`** > **`Secrets and variables`** > **`Actions`** > **`Variables`** タブに以下を登録する。
+
+<table>
+  <thead>
+    <tr>
+      <th>変数名 (Name)</th>
+      <th>値の例 (Value)</th>
+      <th>説明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>GCP_PROJECT_ID</code></td>
+      <td><code>my-sample-project-123456</code></td>
+      <td>Google CloudのプロジェクトID</td>
+    </tr>
+    <tr>
+      <td><code>GCP_WORKLOAD_IDENTITY_PROVIDER</code></td>
+      <td><code>projects/123456789/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider</code></td>
+      <td>Terraformの <code>workload_identity_provider</code> 出力値</td>
+    </tr>
+    <tr>
+      <td><code>GCP_SERVICE_ACCOUNT</code></td>
+      <td><code>github-actions-deployer@my-sample-project-123456.iam.gserviceaccount.com</code></td>
+      <td>Terraformの <code>service_account_email</code> 出力値</td>
+    </tr>
+  </tbody>
+</table>
+
+これで、安全なOIDC認証によるGitHub ActionsからGoogle Cloud Runへの自動デプロイ環境が整う。
+

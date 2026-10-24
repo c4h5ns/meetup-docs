@@ -53,6 +53,16 @@ const { src, alt, caption, class: class_, ...props } = Astro.props;
   }
 </style>
 
+<style is:global>
+  .medium-zoom-overlay {
+    z-index: 100;
+  }
+
+  .medium-zoom-image {
+    z-index: 101;
+  }
+</style>
+
 <script>
   import mediumZoom from "medium-zoom";
 

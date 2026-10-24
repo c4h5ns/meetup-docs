@@ -75,6 +75,26 @@ export default defineConfig({
                                 }
                             ]
                         },
+                        {
+                            label: '第4回',
+                            items: [
+                                {
+                                    slug: 'container-basics/part-4'
+                                },
+                                {
+                                    slug: 'container-basics/part-4/image-optimization'
+                                },
+                                {
+                                    slug: 'container-basics/part-4/github-actions-ci'
+                                },
+                                {
+                                    slug: 'container-basics/part-4/cloud-run-deploy'
+                                },
+                                {
+                                    slug: 'container-basics/part-4/cloud-run-setup'
+                                }
+                            ]
+                        },
                     ]
                 },
                 {

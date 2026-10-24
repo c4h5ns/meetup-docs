@@ -1,0 +1,230 @@
+---
+title: CI/CDの基本概念と自動ビルド
+---
+
+import Figure from "@components/Figure.astro"
+
+開発したアプリケーションを安全かつ迅速に提供するためには、コード変更のたびにテストとコンテナイメージの作成を自動で行う仕組みが欠かせない。
+本項では、**CI（継続的インテグレーション）** の概要を整理した上で、GitHub Actionsを用いてpush時にDockerイメージを自動ビルドする基本パイプラインの構築について解説する。
+
+## CI/CDの概要と目的
+### CI（継続的インテグレーション）とは
+**CI（Continuous Integration: 継続的インテグレーション）** とは、開発者がリポジトリへコードをpushするたびに、
+自動的にビルド・テスト・静的解析などを実行し、コードの統合時に発生する不具合を早期に発見・解消する開発手法である。
+
+- **従来の課題**: 開発者が各自のローカル環境で作業し、リリース直前にまとめて結合すると、環境差異や依存関係の競合による不具合が発生する。
+- **CIによる解決**: 変更のたびに共有ランナー上でクリーンな環境を用意し、自動テストとビルドを通過することを確認する。
+
+### CD（継続的デリバリー / 継続的デプロイ）とは
+**CD（Continuous Delivery / Deployment）** は、CIを通過した安全な成果物を、ステージングや本番環境へ自動で配信・反映する手法である。
+
+- **継続的デリバリー (Continuous Delivery)**: 自動テストを通過した成果物を「いつでも本番環境へリリースできる状態」に保つ（本番反映時は手動承認を行うことが多い）。
+- **継続的デプロイ (Continuous Deployment)**: パイプラインを通過したコードを、人間の介在なしで全自動で本番環境へ即時デプロイする。
+
+
+## GitHub上で事前に行う設定
+GitHub Actionsを実行・安全に運用するために、GitHubリポジトリ側で事前に確認・設定しておくべき項目がある。
+
+### 1. Workflow permissions（実行権限）の設定
+GitHub Actionsがリポジトリ内のコードを読み取ったり、トークンを発行したりするためのデフォルト権限を確認する。
+
+1. 対象リポジトリの **`Settings`** タブを開く。
+2. 左メニューの **`Actions`** > **`General`** を選択する。
+3. **`Workflow permissions`** セクションを確認する:
+   - デフォルトで **`Read repository contents and packages permissions`**（読み取り専用）が選択されていることを確認する。
+
+<Figure
+    src={import("./assets/github-actions-workflow-permissions.png")}
+    caption="GitHub Actionsの実行権限設定"
+/>
+
+### 2. Secrets と Variables
+リポジトリの機密情報や環境依存の設定値は、コードにハードコードせずリポジトリの設定で管理する。
+（**`Settings`** > **`Secrets and variables`** > **`Actions`**）
+
+<table>
+  <thead>
+    <tr>
+      <th>種類</th>
+      <th>用途</th>
+      <th>設定例</th>
+      <th>ログ表示</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Secrets</strong></td>
+      <td>暗号化して保存すべき機密情報</td>
+      <td>外部APIキー、デプロイトークン等</td>
+      <td>自動的にマスク（<code>***</code>）される</td>
+    </tr>
+    <tr>
+      <td><strong>Variables</strong></td>
+      <td>暗号化が不要な環境固有の非機密値</td>
+      <td>GCPプロジェクトID、リージョン名、サービス名</td>
+      <td>そのまま平文で参照可能</td>
+    </tr>
+  </tbody>
+</table>
+
+### 3. ブランチ保護（Branch Protection Rules）
+`main` ブランチへ不完全なコードが直接プッシュされるのを防ぐ設定。
+
+1. **`Settings`** > **`Branches`**（または **`Rules`** > **`Rulesets`**）を開く。
+2. `main` ブランチに対して以下を有効化する:
+   - **Require a pull request before merging**: プルリクエスト経由のマージを必須にする。
+   - **Require status checks to pass before merging**: GitHub ActionsのCIテスト・ビルドジョブが成功するまでマージをブロックする。
+
+
+## GitHub Actionsの基本構造
+GitHub Actionsは、リポジトリの `.github/workflows/` ディレクトリ配下に配置されたYAMLファイルによって定義される。
+
+```text
+/
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+├── src/
+├── Dockerfile
+└── .dockerignore
+```
+
+### 主要な構成要素
+- **Workflow**: 自動化プロセスの全体。1つのYAMLファイルが1つのワークフローに対応する。
+- **on (Event/Trigger)**: ワークフローを実行する契機（`push`, `pull_request`, 定期実行 `schedule` 等）。
+- **Job**: 同じ仮想ランナー上で実行されるステップの集合。複数ジョブを定義した場合はデフォルトで並列実行される。
+- **Step**: ジョブ内で順番に実行される最小タスク。シェルコマンドを実行するか、事前定義された Action（`uses`）を呼び出す。
+- **Runner**: ジョブが実行される仮想マシン環境（`runs-on: ubuntu-latest` など）。
+
+
+## コードpushからDockerビルドまでのワークフロー記述
+```yaml title=".github/workflows/ci.yml"
+name: Continuous Integration
+
+# mainブランチへのpush、およびmainに向けたPull Request時に実行
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+# ソースコードの読み取りのみを許可
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. ソースコードのチェックアウト
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Docker Buildxのセットアップ (高度なビルド・キャッシュ機能の有効化)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 3. Dockerイメージのビルド
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: my-app:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 4. テスト、ヘルスチェック
+      - name: Test container startup
+        run: |
+          docker run --rm -d --name test-app -p 8080:8080 my-app:${{ github.sha }}
+          sleep 3
+          # HTTPリクエストを送信して正常起動を確認
+          curl --fail http://localhost:8080/ || (docker logs test-app && exit 1)
+          docker stop test-app
+```
+
+<details>
+<summary>必要ファイル例</summary>
+
+```dockerfile title="Dockerfile"
+FROM node:22-alpine
+
+WORKDIR /app
+
+COPY package.json ./
+# 外部依存ライブラリがある場合は以下を実行
+# RUN npm ci
+
+COPY . .
+
+EXPOSE 8080
+CMD ["node", "server.js"]
+```
+
+```javascript title="server.js"
+const http = require('http');
+const port = process.env.PORT || 8080;
+
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end('Hello from GitHub Actions CI Container!\n');
+});
+
+server.listen(port, () => {
+  console.log(`Server listening on port ${port}`);
+});
+```
+
+```json title="package.json"
+{
+  "name": "ci-sample-app",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
+```
+
+```text title=".dockerignore"
+.git
+.github
+node_modules
+*.log
+.DS_Store
+```
+
+</details>
+
+### 各ステップのポイント
+
+1. **`actions/checkout@v4`**:  
+   ランナーのワークスペースにリポジトリのソースコードを取得する。
+2. **`docker/setup-buildx-action@v3`**:  
+   Dockerのビルドエンジン「BuildKit」を有効化する。並列ビルドや高度なキャッシュ機能が利用可能になる。
+3. **`docker/build-push-action@v6`**:  
+   Docker公式が提供するビルド用アクション。
+   - `push: false`: CIのビルド検証段階では、外部レジストリへのプッシュは行わない。
+   - `cache-from: type=gha` / `cache-to: type=gha,mode=max`: GitHub Actionsが提供する内部キャッシュ領域にDockerレイヤーを保存する。`package.json` や `pom.xml` に変更がない場合は依存関係のダウンロードレイヤーが即座にキャッシュヒットし、ビルド時間を大幅に短縮できる。
+4. **コンテナ起動テスト**:  
+   単にビルドが成功したかだけでなく、実際にコンテナを一時起動してエンドポイントへ `curl` を行い、起動時にランタイムエラーで落ちないかを検証できる。
+
+## 動作確認とステータスの確認
+1. コードと上記ワークフローファイルをコミットし、GitHubへプッシュする。
+   ```bash
+   user@host-vm:~$ git add .github/workflows/ci.yml
+   user@host-vm:~$ git commit -m "add CI workflow"
+   user@host-vm:~$ git push origin main
+   ```
+2. GitHubのリポジトリページから **`Actions`** タブを開く。
+3. 実行中のワークフローをクリックすると、各ステップのリアルタイムログと実行結果（緑のチェックマーク ✅ または赤のバツ印 ❌）を確認できる。
+
+<Figure
+  src={import("./assets/github-actions-workflow-execution.png")}
+  caption="GitHub Actionsのワークフロー実行"
+/>

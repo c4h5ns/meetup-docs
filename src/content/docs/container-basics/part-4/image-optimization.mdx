@@ -1,0 +1,342 @@
+---
+title: イメージの最適化
+---
+
+## 本番環境用のイメージとマルチステージビルド
+### 開発環境用と本番環境用の要件の違い
+開発時と本番運用時では、コンテナに求められる役割が大きく異なる。
+
+<table>
+  <thead>
+    <tr>
+      <th>項目</th>
+      <th>開発環境</th>
+      <th>本番環境</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>必要なツール</td>
+      <td>コンパイラ、デバッガ、テストツール、パッケージマネージャ、エディタ等</td>
+      <td>アプリケーションの実行ランタイムのみ</td>
+    </tr>
+    <tr>
+      <td>優先事項</td>
+      <td>ビルドの速さ、デバッグの容易さ、ホットリロード</td>
+      <td>セキュリティ、起動速度、軽量性、安定性</td>
+    </tr>
+    <tr>
+      <td>イメージサイズ</td>
+      <td>大きくても許容</td>
+      <td>小さくしたい</td>
+    </tr>
+  </tbody>
+</table>
+
+単一ステージの `Dockerfile` でビルドを行うと、ソースコードのコンパイルに必要なビルドツールや中間ファイル、開発用の依存パッケージがすべて最終的なイメージに含まれる。
+イメージサイズの肥大化に加え、アタックサーフェスが増えることによるセキュリティ上のリスクも問題となる。
+
+### マルチステージビルドの仕組み
+**マルチステージビルド（Multi-stage builds）** とは、1つの `Dockerfile` 内に複数の `FROM` 句を定義し、ビルド作業を行うステージと、実際にアプリケーションを実行するステージを分離する技術である。
+
+- 前段のステージでソースコードのビルドやパッケージのインストールを行う。
+- 後段のステージでは、軽量なベースイメージを採用し、前段からビルド済みの実行バイナリや成果物のみを `COPY --from=<ステージ名>` でコピーする。
+- 最終的に生成されるイメージは **最後のステージの内容のみ** となり、前段のビルドツールやキャッシュ、ソースコードは破棄される。
+
+```dockerfile
+# ステージ1: ビルド環境 (JDKやMavenツールチェーンを含む)
+FROM maven:3.9-eclipse-temurin-21-alpine AS builder
+# ...
+RUN mvn clean package -DskipTests
+
+# ステージ2: 本番実行環境 (最小限のJREランタイムのみ)
+FROM eclipse-temurin:21-jre-alpine
+COPY --from=builder /app/target/*.jar app.jar
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+### 具体的な記述例
+#### 例1: Java (Spring Boot)
+
+```dockerfile title="Dockerfile"
+# --- ビルドステージ ---
+FROM maven:3.9-eclipse-temurin-21-alpine AS builder
+
+WORKDIR /app
+
+COPY pom.xml .
+RUN mvn dependency:go-offline -B
+
+COPY src ./src
+RUN mvn clean package -DskipTests
+
+
+# --- 実行ステージ ---
+FROM eclipse-temurin:21-jre-alpine
+
+WORKDIR /app
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+COPY --from=builder /app/target/*.jar app.jar
+
+USER appuser
+
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+<details>
+<summary>必要ファイル例</summary>
+
+```xml title="pom.xml"
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.4</version>
+        <relativePath/>
+    </parent>
+    <groupId>com.example</groupId>
+    <artifactId>demo</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>demo</name>
+    <description>Demo project for Spring Boot</description>
+    <properties>
+        <java.version>21</java.version>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+    </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+```
+
+```java title="src/main/java/com/example/demo/DemoApplication.java"
+package com.example.demo;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@SpringBootApplication
+@RestController
+public class DemoApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(DemoApplication.class, args);
+    }
+
+    @GetMapping("/")
+    public String hello() {
+        return "Hello from Multi-stage built Spring Boot Container!";
+    }
+}
+```
+
+</details>
+
+<details>
+<summary>例2: Go</summary>
+
+```dockerfile title="Dockerfile"
+# --- ビルドステージ ---
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o server .
+
+# --- 実行ステージ ---
+FROM alpine:3.21
+
+WORKDIR /app
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+COPY --from=builder /app/server .
+
+USER appuser
+
+EXPOSE 8080
+CMD ["./server"]
+```
+
+<details>
+<summary>必要ファイル例</summary>
+
+```go title="main.go"
+package main
+
+import (
+	"fmt"
+	"net/http"
+)
+
+func main() {
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "Hello from Multi-stage built Go Container!")
+	})
+	http.ListenAndServe(":8080", nil)
+}
+```
+
+```text title="go.mod"
+module example.com/m
+
+go 1.24
+```
+
+</details>
+
+</details>
+
+<details>
+<summary>例3: Node.js (React / Vite 静的配信) の記述例</summary>
+
+```dockerfile title="Dockerfile"
+# --- ビルドステージ ---
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+# --- 実行ステージ ---
+FROM nginx:alpine
+
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+<details>
+<summary>必要ファイル例</summary>
+
+```json title="package.json"
+{
+  "name": "docker-react-test",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}
+```
+
+</details>
+
+</details>
+
+
+## マルチステージビルドのメリット
+### 1. イメージサイズの削減
+マルチステージビルドを行うことで、不要なビルドツールや中間ファイルを最終イメージに含めずに済むため、イメージサイズを大幅に削減できる。
+
+1. **コンパイラ・ビルドツールの削減**:  
+  コンパイラや標準ライブラリのソース、各種ビルド補助ツール（GCCやGitなど）
+2. **中間ファイル・パッケージキャッシュの削減**:  
+  パッケージマネージャ（`npm`, `pip`, `go mod` 等）がダウンロードした圧縮アーカイブやキャッシュファイル、中間オブジェクトファイル（`.o` など）
+3. **OS自体のフットプリントの最小化**:  
+  実行ステージでは必要最小限のパッケージのみを含む軽量ディストリビューション（Alpine Linux や Distroless、あるいは完全な空イメージである `scratch`）を選択
+
+### 2. セキュリティの向上（アタックサーフェスの縮小）
+コンテナイメージに含まれるパッケージやツールの数が多ければ多いほど、既知の脆弱性（CVE）が含まれる可能性が高くなる。
+また、実行用コンテナ内に `bash` や `curl`, `wget`, `netcat`, パッケージマネージャを含めないことで、攻撃者が不正侵入したとしても、
+外部から悪意あるスクリプトをダウンロードして実行するなどの横展開（ラテラルムーブメント）が難しくなる。
+
+### 3. デプロイおよびスケールアウトの高速化
+コンテナをクラウド環境（AWS ECS等）で運用する場合も多数メリットが存在する。
+
+- **Push/Pull時間の短縮**:  
+  イメージビルド環境からコンテナレジストリへのPushと、コンテナレジストリからコンテナホストへのPull時間を短縮できる。
+- **転送コスト、保存コストの削減**:  
+  レジストリからのデータ転送費用や、レジストリ上の保存容量を削減できる。
+- **オートスケーリングの迅速化**:  
+  トラフィック急増時に新しいタスクをスケールアウトさせる際、イメージダウンロードが数秒で完了するため、アクセス急増への追従性が向上する。
+
+### 4. 機密情報・ソースコードの保護
+- **ビルドシークレットの漏洩防止**:  
+  プライベートリポジトリのアクセストークンや、ビルド時にのみ必要なAPIキーなどをビルドステージで使用しても、実行ステージに引き継がれないため、
+  最終イメージを解析されて秘密情報が抜き取られるリスクを防ぐことができる。
+- **ソースコードの非公開**:  
+  コンパイル言語の場合、ソースコードそのものを除外してコンパイル済みのバイナリのみを配布できる。
+
+
+## さらなる最適化テクニック
+### `.dockerignore` ファイル
+プロジェクトルートに `.dockerignore` を配置することで、ビルドコンテキストから特定のファイルやディレクトリを除外できる。
+
+```text title=".dockerignore"
+# バージョン管理・環境設定
+.git
+.gitignore
+.env
+.env.*
+
+# 依存ライブラリ・キャッシュ
+node_modules
+npm-debug.log
+__pycache__
+*.pyc
+.cache
+
+# ビルド成果物・ローカルテスト
+dist
+build
+coverage
+*.log
+
+# ドキュメント・IDE設定
+README.md
+.vscode
+.idea
+```
+
+### レイヤーキャッシュを意識した記述順序
+Dockerのイメージレイヤーは、変更があった命令以降のキャッシュが無効化される。
+そのため、**「変更頻度が低い命令を上部に、変更頻度が高い命令を下部に配置する」** のが鉄則である。
+
+```dockerfile title="NG"
+# 変更頻度が高いソースコードを含むファイルのコピーを上部に配置
+COPY . .
+RUN npm install
+```
+
+```dockerfile title="OK"
+# OK: 変更頻度が低い依存関係のインストールを上部に配置
+COPY package.json package-lock.json ./
+RUN npm install
+COPY . .
+```
